@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: Example PreAuth application
+app:
+  env:
+    preauth:
+      header:
+        name: remote-user
+    ldap:
+      groupSearch:
+        base: dc=example,dc=com
+        filter: (member:1.2.840.113556.1.4.1941:={0})
+        roleAttribute: cn
+        ignorePartialResultException: true
+        searchSubtree: true
+      catalog:
+        url: ldap://ldap.forumsys.com:389/
+        user: cn=read-only-admin,dc=example,dc=com
+        pass: password
+      java:
+        naming:
+          referral: follow
+      pool:
+        timeBetweenEvictionRunsMillis: 30000
+        minEvictableIdleTimeMillis: 1800000
+        maxActive: 8
+        minIdle: 0
+        maxIdle: 8
+        maxTotal: -1
+        maxWait: -1
+        testOnBorrow: true
+        testWhileIdle: true
+      userSearch:
+        base: dc=example,dc=com
+        filter: (uid={0})
+        searchSubtree: true
+      authentication:
+        cache:
+          enabled: true
+      authorization: true
+      read:
+        timeout: 50000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+logging:
+  level:
+    root: debug
