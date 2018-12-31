@@ -38,9 +38,4 @@ public class WebSecurityConfiguration extends AbstractPreAuthLdapSecurity {
                 .deleteCookies("JSESSIONID"); // JSESSIONID name may change between environments
 
     }
-
-
-
-
-
 }

@@ -2,3 +2,373 @@ image:https://travis-ci.org/joanluk/demo-preauth.svg?branch=master["Build Status
 
 = Ejemplo aplicación Spring Boot integrada con SSO mediante filtro preauth
 
+Con este ejemplo se pretende mostrar una posible integración de una aplicación front integrada en un entorno corporativo con una SSO.
+
+El mecanismo es sencillo, la seguridad reside en el sistema previo, que podría ser una Apache, server, etc. En el caso que este sistema
+valide las crendeciales del usuario (proceso de autenticación), dicho sistema propaga cabecera http a nuestra aplicación, la cual, mediante
+un filtro de preauth, busca si dicha cabecera llega y además está informada.
+
+Si está informada, asume que el sistema previo ha realizado el proceso de autenticación y esta aplicación simplemente se encarga de
+montar el contexto de seguridad y en el caso que requiere realizar el prceso de autorización.
+
+
+Para el ejemplo, se ha utilizado como proveedor ldap y se ha utilizado un servidor online para test de manera que se elimine la necesidad
+de tener que montar un server ldap en memoria.
+
+
+La aplicación se ha montado con seguridad basada en sesión y formulario de login. Además a modo de ejemplo se ha definido un servicio rest
+
+__api/user__ que ofrece información del usuario logado.
+
+
+Así, una vez arrancada la aplicación spring boot si ejecutamos el siguien comando
+
+[source,java]
+----
+http   :8080/api/user 'remote-user:gauss'
+----
+
+Se obtiene la siguiente información:
+
+[source,json]
+----
+HTTP/1.1 200
+Cache-Control: no-cache, no-store, max-age=0, must-revalidate
+Content-Type: application/json;charset=UTF-8
+Date: Mon, 31 Dec 2018 09:49:08 GMT
+Expires: 0
+Pragma: no-cache
+Set-Cookie: JSESSIONID=8E463CA3DBE0319152230EEFB3AB9938; Path=/; HttpOnly
+Transfer-Encoding: chunked
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 1; mode=block
+
+{
+    "authenticated": true,
+    "authorities": [],
+    "credentials": "N/A",
+    "details": {
+        "grantedAuthorities": [],
+        "remoteAddress": "0:0:0:0:0:0:0:1",
+        "sessionId": null
+    },
+    "name": "gauss",
+    "principal": {
+        "accountNonExpired": true,
+        "accountNonLocked": true,
+        "authorities": [],
+        "credentialsNonExpired": true,
+        "enabled": true,
+        "password": null,
+        "username": "gauss"
+    }
+}
+----
+
+
+Como se puede apreciar, se ha pasado la cabecera **remote-user**  para simular que ha sido validado.
+
+En caso que no se pasara esa cabecera, la aplicación por defecto, al tener definido otro provider, redirige al formulario de login
+
+[source,java]
+----
+HTTP/1.1 302
+Cache-Control: no-cache, no-store, max-age=0, must-revalidate
+Content-Length: 0
+Date: Mon, 31 Dec 2018 09:51:21 GMT
+Expires: 0
+Location: http://localhost:8080/login
+Pragma: no-cache
+Set-Cookie: JSESSIONID=C3893C3739C59FCAF44A223219B13FA9; Path=/; HttpOnly
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 1; mode=block
+----
+
+
+Como se ha indicado antes, se ha usado un server ldap online el cual ya tiene usuarios creados. La url donde se puede consultar más detalle
+se encuentra https://www.forumsys.com/tutorials/integration-how-to/ldap/online-ldap-test-server/[aquí]
+
+a continuación se incluye la configuración más interesante para configurar el filtro preauth
+
+[source,java]
+----
+@Value("${app.env.preauth.header.name:iv-user}")
+    private String headerName;
+
+    @Bean
+    @ConditionalOnMissingBean
+    public PreAuthenticatedAuthenticationProvider preAuthenticatedAuthenticationProvider() {
+        PreAuthenticatedAuthenticationProvider preAuthenticatedAuthenticationProvider = new PreAuthenticatedAuthenticationProvider();
+        preAuthenticatedAuthenticationProvider
+                .setPreAuthenticatedUserDetailsService(preAuthenticatedGrantedAuthoritiesUserDetailsService());
+        return preAuthenticatedAuthenticationProvider;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public PreAuthenticatedGrantedAuthoritiesUserDetailsService preAuthenticatedGrantedAuthoritiesUserDetailsService() {
+        return new PreAuthenticatedGrantedAuthoritiesUserDetailsService();
+    }
+
+
+    @Bean
+    @ConditionalOnMissingBean
+    public GrantedAuthoritiesWebAuthenticationDetails preAuthenticatedGrantedAuthoritiesWebAuthenticationDetails() {
+        return new GrantedAuthoritiesWebAuthenticationDetails(
+                defaultLdapAuthoritiesPopulator(), userSearch(), headerName);
+
+    }
+
+
+    @Override
+    public void configureAuthenticationManager(AuthenticationManagerBuilder auth)
+            throws Exception {
+
+        auth.authenticationProvider(preAuthenticatedAuthenticationProvider());
+        log.debug("Configured preAuthenticatedAuthenticationProvider for authentication manager");
+
+        super.configureAuthenticationManager(auth);
+        log.debug("Configured all ldapAuthenticationProvider for authentication manager");
+
+    }
+
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        RequestHeaderAuthenticationFilter requestHeaderAuthenticationFilter = new RequestHeaderAuthenticationFilter();
+        requestHeaderAuthenticationFilter.setPrincipalRequestHeader(headerName);
+        requestHeaderAuthenticationFilter.setAuthenticationManager(authenticationManager());
+        requestHeaderAuthenticationFilter.setAuthenticationDetailsSource(preAuthenticatedGrantedAuthoritiesWebAuthenticationDetails());
+        requestHeaderAuthenticationFilter.setExceptionIfHeaderMissing(false);
+        http.addFilterBefore(requestHeaderAuthenticationFilter,
+                UsernamePasswordAuthenticationFilter.class);
+    }
+----
+
+La clase *AbstractPreAuthLdapSecurity*  contiene toda la configuración necesaria para definir el filtro así como el provider preauth requerid
+en el caso de que llegue la cabecera correspondiente y se requiere montar el contexto de seguridad y obtener más información, roles, etc. de usuario logado
+
+En la clase *AbstractLdapSecurity* se encuentra la parte de configuración del proveedor de seguridad ldap base.
+
+
+[source,java]
+----
+@Slf4j
+public abstract class AbstractLdapSecurity extends WebSecurityConfigurerAdapter {
+
+
+    @Autowired
+    private ApplicationContext context;
+
+
+    @Autowired
+    public void configureGlobal(AuthenticationManagerBuilder auth)
+            throws Exception {
+        configureAuthenticationManager(auth);
+        configureAdditional(auth);
+    }
+
+
+    /**
+     * Method for additional configuration for the auth manager builder.
+     *
+     * Applications can overwrite this method to add additional behavior
+     *
+     * @param auth auth manager builder
+     */
+    protected void configureAdditional(AuthenticationManagerBuilder auth) {
+    }
+
+    @Bean
+    public LdapSettings ldapSettings() {
+        return new LdapSettings();
+    }
+
+    public void configureAuthenticationManager(AuthenticationManagerBuilder auth)
+            throws Exception {
+
+        registerDirCorporate(auth);
+    }
+
+
+    private void registerDirCorporate(AuthenticationManagerBuilder auth) throws Exception {
+        auth.authenticationProvider(defineDirCorporateAuthenticator());
+
+    }
+
+
+    /**
+     * Define bind authenticator for AD corporate.
+     *
+     * @return AuthenticationProvider authentication provider
+     * @throws Exception exception
+     */
+    private AuthenticationProvider defineDirCorporateAuthenticator() throws Exception {
+        BindAuthenticator bindAuthenticator = new BindAuthenticator(
+                contextSourceTarget());
+        bindAuthenticator.setUserSearch(userSearch());
+        CustomLdapAuthenticationProvider ldapAuthenticationProvider = new CustomLdapAuthenticationProvider(
+                bindAuthenticator, strategyLdapAuthoritiesPopulator());
+        if (ldapSettings().isCacheAuthenticationActivated()) {
+            log.debug("Authentication cache enabled");
+            ldapAuthenticationProvider.setUserCache(basicAuthenticationUserCache());
+        }
+        return ldapAuthenticationProvider;
+    }
+
+
+    @Bean
+    public FilterBasedLdapUserSearch userSearch() {
+        FilterBasedLdapUserSearch userSearch = new FilterBasedLdapUserSearch(
+                ldapSettings().getUserSearchBase(), ldapSettings().getUserSearchFilter(), contextSourceTarget());
+        userSearch.setSearchSubtree(ldapSettings().isUserSearchSubTree());
+        return userSearch;
+    }
+
+
+    @Bean(name = "defaultLdapAuthoritiesPopulator")
+    public DefaultLdapAuthoritiesPopulator defaultLdapAuthoritiesPopulator() {
+        log.debug("Defined default strategy for ldap authorities populator.");
+
+        DefaultLdapAuthoritiesPopulator defaultLdapAuthoritiesPopulator = new DefaultLdapAuthoritiesPopulator(
+                contextSource(), ldapSettings().getGroupSearchBase());
+        defaultLdapAuthoritiesPopulator.setGroupSearchFilter(ldapSettings().getGroupSearchFilter());
+        defaultLdapAuthoritiesPopulator
+                .setGroupRoleAttribute(ldapSettings().getGroupRoleAttribute());
+        defaultLdapAuthoritiesPopulator.setSearchSubtree(ldapSettings().isGroupSearchSubtree());
+        defaultLdapAuthoritiesPopulator
+                .setIgnorePartialResultException(ldapSettings().isIgnorePartialResultException());
+
+        return defaultLdapAuthoritiesPopulator;
+
+    }
+
+
+    @Bean
+    public PoolingContextSource contextSource() {
+        PoolingContextSource contextSource = new PoolingContextSource();
+        contextSource.setContextSource(contextSourceTarget());
+        contextSource.setDirContextValidator(new DefaultDirContextValidator());
+        contextSource
+                .setTimeBetweenEvictionRunsMillis(ldapSettings().getTimeBetweenEvictionRunsMillis());
+        contextSource.setMinEvictableIdleTimeMillis(ldapSettings().getMinEvictableIdleTimeMillis());
+        contextSource.setMaxActive(ldapSettings().getMaxActive());
+        contextSource.setMinIdle(ldapSettings().getMinIdle());
+        contextSource.setMaxIdle(ldapSettings().getMaxIdle());
+        contextSource.setMaxTotal(ldapSettings().getMaxTotal());
+        contextSource.setMaxWait(ldapSettings().getMaxWait());
+        contextSource.setTestOnBorrow(ldapSettings().isTestOnBorrow());
+        contextSource.setTestWhileIdle(ldapSettings().isTestWhileIdle());
+        return contextSource;
+    }
+
+
+    @Bean
+    public LdapContextSource contextSourceTarget() {
+        LdapContextSource contextSourceTarget = new LdapContextSource();
+        contextSourceTarget.setUrl(ldapSettings().getUrl());
+        contextSourceTarget.setUserDn(ldapSettings().getUserDn());
+        contextSourceTarget.setPassword(ldapSettings().getPassword());
+        contextSourceTarget
+                .setBaseEnvironmentProperties(baseEnvironmentProperties());
+        contextSourceTarget.setPooled(false);
+        try {
+            contextSourceTarget.afterPropertiesSet();
+        } catch (Exception e) {
+            log.error("There was an error in afterPropertiesSet "
+                    + e.getMessage());
+        }
+        return contextSourceTarget;
+    }
+
+
+    @Bean
+    public Map<String, Object> baseEnvironmentProperties() {
+        Map<String, Object> baseEnvironmentProperties = new HashMap<>();
+        baseEnvironmentProperties.put("java.naming.referral", ldapSettings().getJavaNamingRefal());
+        if (StringUtils.hasText(ldapSettings().getLdapReadTimeout())
+                && NumberUtils.isDigits(ldapSettings().getLdapReadTimeout())) {
+            baseEnvironmentProperties.put("com.sun.jndi.ldap.read.timeout",
+                    ldapSettings().getLdapReadTimeout());
+        } else {
+            log.info("The value for app.env.ldap.read.timeout/gaia.env.ldap.read.timeout is null or not number. "
+                    + "No timeout for ldap read query is set.");
+        }
+        return baseEnvironmentProperties;
+    }
+
+
+    protected ApplicationContext getContext() {
+        return context;
+    }
+
+
+    /**
+     * Create basic authentication cache
+     *
+     * @return UserCache
+     * @throws Exception
+     * @see UserCache
+     */
+    private UserCache basicAuthenticationUserCache() throws Exception {
+
+        CaffeineCache caffeineCache = new CaffeineCache("groupsldap",
+                Caffeine.newBuilder().expireAfterWrite(5, TimeUnit.MINUTES).initialCapacity(1000).build());
+        return new SpringCacheBasedUserCache(caffeineCache);
+
+    }
+
+
+    private LdapAuthoritiesPopulator strategyLdapAuthoritiesPopulator() {
+        return (Boolean.valueOf(ldapSettings().getPopulatorAuthorizationActive()) ? defaultLdapAuthoritiesPopulator()
+                : new NullLdapAuthoritiesPopulator());
+    }
+
+
+
+}
+----
+
+
+Por último, la clase de configuración final que extiende de las dos anteriores simplemente define la configuración sobre urls de acceso, tipo de securización, etc.
+
+[source,java]
+----
+@Configuration
+@EnableWebSecurity
+public class WebSecurityConfiguration extends AbstractPreAuthLdapSecurity {
+
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        super.configure(http);
+        http
+                .headers()
+                .frameOptions().disable()
+                //.addHeaderWriter(configureFrameOptions()).and()
+                .and()
+
+                .authorizeRequests()
+
+                .antMatchers("/**").authenticated()
+                .and()
+                // Form authentication
+                .formLogin()
+                //.httpBasic() //to use httpBasic authentication uncomment this line and comment previous 3
+                .and()
+                .logout()
+                .logoutRequestMatcher(new AntPathRequestMatcher("/logout"))
+                .invalidateHttpSession(true).clearAuthentication(true)
+                .deleteCookies("JSESSIONID"); // JSESSIONID name may change between environments
+
+    }
+}
+
+----
+
+
+Adicionalmente, se ha definido un provider *CustomLdapAuthenticationProvider* que extiende del que proporcionar Spring Ldap para permitir
+cachear información de seguridad durante los siguientes 15 minutos. Esto es útil en los casos en los que se invoquen a servicios con seguridad
+sin estado y así evitar realizar para cada llamada consultas al AD.
+
+
