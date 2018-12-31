@@ -1,0 +1,4 @@
+image:https://travis-ci.org/joanluk/demo-preauth.svg?branch=master["Build Status", link="https://travis-ci.org/joanluk/demo-preauth"]
+
+= Ejemplo aplicación Spring Boot integrada con SSO mediante filtro preauth
+
