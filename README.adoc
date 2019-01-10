@@ -375,7 +375,7 @@ sin estado y así evitar realizar para cada llamada consultas al AD.
 == Generación contenedor docker
 
 Se ha incluido el plugin maven para generar la imagen docker de la aplicación para poder desplegar en un contenedor docker. Para ello simplemente con la ejecución
-del comando
+del comando:
 
 	mvn clean package
 
@@ -405,7 +405,28 @@ del comando
 
 ----
 
-Se generará la imagen que se podrá usar para desplegar el contenedor
+El fichero _Dockerfile_ utilizado es el siguiente:
+
+[source,xml]
+----
+
+FROM openjdk:8-jre-alpine
+VOLUME /tmp
+ARG JAR_FILE
+
+ENV JAVA_OPTIONS "-Xms256m -Xmx512m -Djava.awt.headless=true"
+
+COPY ${JAR_FILE} /opt/app.jar
+
+RUN addgroup bootapp && \
+    adduser -D -S -h /var/cache/bootapp -s /sbin/nologin -G bootapp bootapp
+
+WORKDIR /opt
+USER bootapp
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/opt/app.jar"]
+----
+
+Con esto sería suficiente para generar la imagen que se podrá usar para desplegar el contenedor
 
 Más info sobre el plugin utilizado https://github.com/spotify/dockerfile-maven[aquí]
 
