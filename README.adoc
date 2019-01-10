@@ -372,3 +372,41 @@ cachear información de seguridad durante los siguientes 15 minutos. Esto es út
 sin estado y así evitar realizar para cada llamada consultas al AD.
 
 
+== Generación contenedor docker
+
+Se ha incluido el plugin maven para generar la imagen docker de la aplicación para poder desplegar en un contenedor docker. Para ello simplemente con la ejecución
+del comando
+
+	mvn clean package
+
+
+[source,xml]
+----
+<plugin>
+				<groupId>com.spotify</groupId>
+				<artifactId>dockerfile-maven-plugin</artifactId>
+				<version>1.4.1</version>
+				<executions>
+					<execution>
+						<id>default</id>
+						<goals>
+							<goal>build</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<repository>emaginalabs/${project.artifactId}</repository>
+					<tag>${project.version}</tag>
+					<buildArgs>
+						<JAR_FILE>target/${project.build.finalName}.jar</JAR_FILE>
+					</buildArgs>
+				</configuration>
+			</plugin>
+
+----
+
+Se generará la imagen que se podrá usar para desplegar el contenedor
+
+Más info sobre el plugin utilizado https://github.com/spotify/dockerfile-maven[aquí]
+
+
